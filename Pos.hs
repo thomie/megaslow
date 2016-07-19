@@ -39,6 +39,9 @@ import Data.Word (Word)
 
 import NonEmpty
 
+import Prelude hiding (undefined, error)
+import NoCallStack
+
 ----------------------------------------------------------------------------
 -- Abstract position
 

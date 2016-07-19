@@ -41,7 +41,6 @@ import Data.Foldable (foldl')
 import Data.Monoid hiding ((<>))
 import Data.Proxy
 import Data.Set (Set)
-import Prelude hiding (all)
 import qualified Control.Applicative               as A
 import qualified Control.Monad.Trans.Reader        as L
 import qualified Control.Monad.Trans.State.Strict  as S
@@ -59,6 +58,9 @@ import NonEmpty
 
 import Error
 import Pos
+
+import Prelude hiding (undefined, error)
+import NoCallStack
 
 ----------------------------------------------------------------------------
 -- Data types
