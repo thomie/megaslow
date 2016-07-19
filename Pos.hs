@@ -11,11 +11,10 @@
 -- and column number. List of such positions can be used to model stack of
 -- include files.
 
-{-# LANGUAGE CPP                #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE TupleSections      #-}
 
-module Text.Megaparsec.Pos
+module Pos
   ( -- * Abstract position
     Pos
   , mkPos
@@ -31,16 +30,14 @@ module Text.Megaparsec.Pos
   , defaultTabWidth )
 where
 
-import Control.Monad.Catch
 import Data.Data (Data)
-import Data.Semigroup
 import Data.Typeable (Typeable)
 import Unsafe.Coerce
 
-#if !MIN_VERSION_base(4,8,0)
 import Control.Applicative ((<$>))
 import Data.Word (Word)
-#endif
+
+import NonEmpty
 
 ----------------------------------------------------------------------------
 -- Abstract position
@@ -61,11 +58,8 @@ newtype Pos = Pos Word
 --
 -- @since 5.0.0
 
-mkPos :: (Integral a, MonadThrow m) => a -> m Pos
-mkPos x =
-  if x < 1
-    then throwM InvalidPosException
-    else (return . Pos . fromIntegral) x
+mkPos :: (Integral a, Monad m) => a -> m Pos
+mkPos x = (return . Pos . fromIntegral) x
 {-# INLINE mkPos #-}
 
 -- | Dangerous construction of 'Pos'. Use when you know for sure that
@@ -106,8 +100,6 @@ instance Read Pos where
 
 data InvalidPosException = InvalidPosException
   deriving (Eq, Show, Data, Typeable)
-
-instance Exception InvalidPosException
 
 ----------------------------------------------------------------------------
 -- Source position
