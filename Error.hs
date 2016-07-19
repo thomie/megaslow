@@ -12,12 +12,11 @@
 -- describing what exactly went wrong as well as a way to return arbitrary
 -- data in case of failure.
 
-{-# LANGUAGE CPP                #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleContexts   #-}
 {-# LANGUAGE FlexibleInstances  #-}
 
-module Text.Megaparsec.Error
+module Error
   ( ErrorItem (..)
   , ErrorComponent (..)
   , Dec (..)
@@ -28,23 +27,21 @@ module Text.Megaparsec.Error
   , sourcePosStackPretty )
 where
 
-import Control.Monad.Catch
 import Data.Data (Data)
 import Data.Foldable (concat)
 import Data.List (intercalate)
-import Data.List.NonEmpty (NonEmpty (..))
-import Data.Semigroup
+import Data.Monoid hiding ((<>))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Prelude hiding (concat)
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Set           as E
 
-import Text.Megaparsec.Pos
+import Pos
 
-#if !MIN_VERSION_base(4,8,0)
 import Control.Applicative ((<$>))
-#endif
+
+import NonEmpty
+import qualified NonEmpty as NE
 
 -- | Data type that is used to represent “unexpected\/expected” items in
 -- parse error. The data type is parametrized over token type @t@.
@@ -55,7 +52,7 @@ data ErrorItem t
   = Tokens (NonEmpty t)      -- ^ Non-empty stream of tokens
   | Label (NonEmpty Char)    -- ^ Label (cannot be empty)
   | EndOfInput               -- ^ End of input
-  deriving (Show, Read, Eq, Ord, Data, Typeable)
+  deriving (Show, Read, Eq, Ord, Typeable)
 
 -- | The type class defines how to represent information about various
 -- exceptional situations. Data types that are used as custom data component
@@ -124,8 +121,6 @@ instance (Ord t, Ord e) => Monoid (ParseError t e) where
   mempty  = ParseError (initialPos "" :| []) E.empty E.empty E.empty
   mappend = (<>)
   {-# INLINE mappend #-}
-
-instance (Show t, Typeable t, Show e, Typeable e) => Exception (ParseError t e)
 
 -- | Merge two error data structures into one joining their collections of
 -- message items and preferring longest match. In other words, earlier error
