@@ -12,7 +12,6 @@
 -- The primitive parser combinators.
 
 {-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE FunctionalDependencies     #-}
@@ -25,7 +24,7 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_HADDOCK not-home            #-}
 
-module Text.Megaparsec.Prim
+module Prim
   ( -- * Data types
     State (..)
   , Stream (..)
@@ -33,63 +32,33 @@ module Text.Megaparsec.Prim
   , ParsecT
     -- * Primitive combinators
   , MonadParsec (..)
-  , (<?>)
-  , unexpected
-    -- * Parser state combinators
-  , getInput
-  , setInput
-  , getPosition
-  , setPosition
-  , pushPosition
-  , popPosition
-  , getTabWidth
-  , setTabWidth
-  , setParserState
-    -- * Running parser
-  , runParser
-  , runParser'
-  , runParserT
-  , runParserT'
-  , parse
-  , parseMaybe
-  , parseTest )
+  )
 where
 
 import Control.Monad
-import Control.Monad.Cont.Class
-import Control.Monad.Error.Class
-import Control.Monad.Identity
-import Control.Monad.Reader.Class
-import Control.Monad.State.Class hiding (state)
-import Control.Monad.Trans
 import Control.Monad.Trans.Identity
 import Data.Foldable (foldl')
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Monoid hiding ((<>))
 import Data.Proxy
-import Data.Semigroup
 import Data.Set (Set)
 import Prelude hiding (all)
 import qualified Control.Applicative               as A
-import qualified Control.Monad.Fail                as Fail
 import qualified Control.Monad.Trans.Reader        as L
-import qualified Control.Monad.Trans.State.Lazy    as L
 import qualified Control.Monad.Trans.State.Strict  as S
 import qualified Control.Monad.Trans.Writer.Lazy   as L
 import qualified Control.Monad.Trans.Writer.Strict as S
 import qualified Data.ByteString.Char8             as B
 import qualified Data.ByteString.Lazy.Char8        as BL
-import qualified Data.List.NonEmpty                as NE
 import qualified Data.Set                          as E
-import qualified Data.Text                         as T
-import qualified Data.Text.Lazy                    as TL
 
-import Text.Megaparsec.Error
-import Text.Megaparsec.Pos
-
-#if !MIN_VERSION_base(4,8,0)
 import Control.Applicative ((<$>), (<*), pure)
-#endif
+
+import Mtl as L
+import qualified NonEmpty                as NE
+import NonEmpty
+
+import Error
+import Pos
 
 ----------------------------------------------------------------------------
 -- Data types
@@ -261,20 +230,6 @@ instance Stream BL.ByteString where
   updatePos = const defaultUpdatePos
   {-# INLINE updatePos #-}
 
-instance Stream T.Text where
-  type Token T.Text = Char
-  uncons = T.uncons
-  {-# INLINE uncons #-}
-  updatePos = const defaultUpdatePos
-  {-# INLINE updatePos #-}
-
-instance Stream TL.Text where
-  type Token TL.Text = Char
-  uncons = TL.uncons
-  {-# INLINE uncons #-}
-  updatePos = const defaultUpdatePos
-  {-# INLINE updatePos #-}
-
 -- If you're reading this, you may be interested in how Megaparsec works on
 -- lower level. That's quite simple. 'ParsecT' is a wrapper around function
 -- that takes five arguments:
@@ -373,7 +328,6 @@ instance (ErrorComponent e, Stream s)
     => Monad (ParsecT e s m) where
   return = pure
   (>>=)  = pBind
-  fail   = Fail.fail
 
 pPure :: a -> ParsecT e s m a
 pPure x = ParsecT $ \s _ _ eok _ -> eok x s mempty
@@ -391,16 +345,6 @@ pBind m k = ParsecT $ \s cok cerr eok eerr ->
   in unParser m s mcok cerr meok eerr
 {-# INLINE pBind #-}
 
-instance (ErrorComponent e, Stream s)
-    => Fail.MonadFail (ParsecT e s m) where
-  fail = pFail
-
-pFail :: ErrorComponent e => String -> ParsecT e s m a
-pFail msg = ParsecT $ \s@(State _ pos _) _ _ _ eerr ->
-  eerr (ParseError pos E.empty E.empty d) s
-  where d = E.singleton (representFail msg)
-{-# INLINE pFail #-}
-
 -- | Low-level creation of the 'ParsecT' type.
 
 mkPT :: Monad m => (State s -> m (Reply e s a)) -> ParsecT e s m a
@@ -415,34 +359,6 @@ mkPT k = ParsecT $ \s cok cerr eok eerr -> do
       case result of
         OK    x -> eok x s' mempty
         Error e -> eerr e s'
-
-instance (ErrorComponent e, Stream s, MonadIO m)
-    => MonadIO (ParsecT e s m) where
-  liftIO = lift . liftIO
-
-instance (ErrorComponent e, Stream s, MonadReader r m)
-    => MonadReader r (ParsecT e s m) where
-  ask       = lift ask
-  local f p = mkPT $ \s -> local f (runParsecT p s)
-
-instance (ErrorComponent e, Stream s, MonadState st m)
-    => MonadState st (ParsecT e s m) where
-  get = lift get
-  put = lift . put
-
-instance (ErrorComponent e, Stream s, MonadCont m)
-    => MonadCont (ParsecT e s m) where
-  callCC f = mkPT $ \s ->
-    callCC $ \c ->
-      runParsecT (f (\a -> mkPT $ \s' -> c (pack s' a))) s
-    where pack s a = Reply s Virgin (OK a)
-
-instance (ErrorComponent e, Stream s, MonadError e' m)
-    => MonadError e' (ParsecT e s m) where
-  throwError = lift . throwError
-  p `catchError` h = mkPT $ \s ->
-    runParsecT p s `catchError` \e ->
-      runParsecT (h e) s
 
 instance (ErrorComponent e, Stream s)
     => MonadPlus (ParsecT e s m) where
@@ -477,10 +393,6 @@ longestMatch s1@(State _ pos1 _) s2@(State _ pos2 _) =
     EQ -> s2
     GT -> s1
 {-# INLINE longestMatch #-}
-
-instance MonadTrans (ParsecT e s) where
-  lift amb = ParsecT $ \s _ _ eok _ ->
-    amb >>= \a -> eok a s mempty
 
 ----------------------------------------------------------------------------
 -- Primitive combinators
@@ -817,212 +729,12 @@ pUpdateParserState :: (State s -> State s) -> ParsecT e s m ()
 pUpdateParserState f = ParsecT $ \s _ _ eok _ -> eok () (f s) mempty
 {-# INLINE pUpdateParserState #-}
 
--- | A synonym for 'label' in form of an operator.
-
-infix 0 <?>
-
-(<?>) :: MonadParsec e s m => m a -> String -> m a
-(<?>) = flip label
-
--- | The parser @unexpected item@ always fails with an error message telling
--- about unexpected item @item@ without consuming any input.
-
-unexpected :: MonadParsec e s m => ErrorItem (Token s) -> m a
-unexpected item = failure (E.singleton item) E.empty E.empty
-{-# INLINE unexpected #-}
-
 -- | Make a singleton non-empty list from a value.
 
 nes :: a -> NonEmpty a
 nes x = x :| []
 {-# INLINE nes #-}
 
-----------------------------------------------------------------------------
--- Parser state combinators
-
--- | Return the current input.
-
-getInput :: MonadParsec e s m => m s
-getInput = stateInput <$> getParserState
-
--- | @setInput input@ continues parsing with @input@. The 'getInput' and
--- 'setInput' functions can for example be used to deal with include files.
-
-setInput :: MonadParsec e s m => s -> m ()
-setInput s = updateParserState (\(State _ pos w) -> State s pos w)
-
--- | Return the current source position.
---
--- See also: 'setPosition', 'pushPosition', 'popPosition', and 'SourcePos'.
-
-getPosition :: MonadParsec e s m => m SourcePos
-getPosition = NE.head . statePos <$> getParserState
-
--- | @setPosition pos@ sets the current source position to @pos@.
---
--- See also: 'getPosition', 'pushPosition', 'popPosition', and 'SourcePos'.
-
-setPosition :: MonadParsec e s m => SourcePos -> m ()
-setPosition pos = updateParserState $ \(State s (_:|z) w) ->
-  State s (pos:|z) w
-
--- | Push given position into stack of positions and continue parsing
--- working with this position. Useful for working with include files and the
--- like.
---
--- See also: 'getPosition', 'setPosition', 'popPosition', and 'SourcePos'.
---
--- @since 5.0.0
-
-pushPosition :: MonadParsec e s m => SourcePos -> m ()
-pushPosition pos = updateParserState $ \(State s z w) ->
-  State s (NE.cons pos z) w
-
--- | Pop a position from stack of positions unless it only contains one
--- element (in that case stack of positions remains the same). This is how
--- to return to previous source file after 'pushPosition'.
---
--- See also: 'getPosition', 'setPosition', 'pushPosition', and 'SourcePos'.
---
--- @since 5.0.0
-
-popPosition :: MonadParsec e s m => m ()
-popPosition = updateParserState $ \(State s z w) ->
-  case snd (NE.uncons z) of
-    Nothing -> State s z w
-    Just z' -> State s z' w
-
--- | Return tab width. Default tab width is equal to 'defaultTabWidth'. You
--- can set different tab width with help of 'setTabWidth'.
-
-getTabWidth :: MonadParsec e s m => m Pos
-getTabWidth = stateTabWidth <$> getParserState
-
--- | Set tab width. If argument of the function is not positive number,
--- 'defaultTabWidth' will be used.
-
-setTabWidth :: MonadParsec e s m => Pos -> m ()
-setTabWidth w = updateParserState (\(State s pos _) -> State s pos w)
-
--- | @setParserState st@ set the full parser state to @st@.
-
-setParserState :: MonadParsec e s m => State s -> m ()
-setParserState st = updateParserState (const st)
-
-----------------------------------------------------------------------------
--- Running a parser
-
--- | @parse p file input@ runs parser @p@ over 'Identity' (see 'runParserT'
--- if you're using the 'ParsecT' monad transformer; 'parse' itself is just a
--- synonym for 'runParser'). It returns either a 'ParseError' ('Left') or a
--- value of type @a@ ('Right'). 'parseErrorPretty' can be used to turn
--- 'ParseError' into the string representation of the error message. See
--- "Text.Megaparsec.Error" if you need to do more advanced error analysis.
---
--- > main = case (parse numbers "" "11,2,43") of
--- >          Left err -> putStr (parseErrorPretty err)
--- >          Right xs -> print (sum xs)
--- >
--- > numbers = integer `sepBy` char ','
-
-parse
-  :: Parsec e s a -- ^ Parser to run
-  -> String       -- ^ Name of source file
-  -> s            -- ^ Input for parser
-  -> Either (ParseError (Token s) e) a
-parse = runParser
-
--- | @parseMaybe p input@ runs parser @p@ on @input@ and returns result
--- inside 'Just' on success and 'Nothing' on failure. This function also
--- parses 'eof', so if the parser doesn't consume all of its input, it will
--- fail.
---
--- The function is supposed to be useful for lightweight parsing, where
--- error messages (and thus file name) are not important and entire input
--- should be parsed. For example it can be used when parsing of single
--- number according to specification of its format is desired.
-
-parseMaybe :: (ErrorComponent e, Stream s) => Parsec e s a -> s -> Maybe a
-parseMaybe p s =
-  case parse (p <* eof) "" s of
-    Left  _ -> Nothing
-    Right x -> Just x
-
--- | The expression @parseTest p input@ applies a parser @p@ against input
--- @input@ and prints the result to stdout. Useful for testing.
-
-parseTest :: ( ShowErrorComponent e
-             , Ord (Token s)
-             , ShowToken (Token s)
-             , Show a )
-  => Parsec e s a -- ^ Parser to run
-  -> s            -- ^ Input for parser
-  -> IO ()
-parseTest p input =
-  case parse p "" input of
-    Left  e -> putStr (parseErrorPretty e)
-    Right x -> print x
-
--- | @runParser p file input@ runs parser @p@ on the input list of tokens
--- @input@, obtained from source @file@. The @file@ is only used in error
--- messages and may be the empty string. Returns either a 'ParseError'
--- ('Left') or a value of type @a@ ('Right').
---
--- > parseFromFile p file = runParser p file <$> readFile file
-
-runParser
-  :: Parsec e s a -- ^ Parser to run
-  -> String     -- ^ Name of source file
-  -> s          -- ^ Input for parser
-  -> Either (ParseError (Token s) e) a
-runParser p name s = snd $ runParser' p (initialState name s)
-
--- | The function is similar to 'runParser' with the difference that it
--- accepts and returns parser state. This allows to specify arbitrary
--- textual position at the beginning of parsing, for example. This is the
--- most general way to run a parser over the 'Identity' monad.
---
--- @since 4.2.0
-
-runParser'
-  :: Parsec e s a -- ^ Parser to run
-  -> State s    -- ^ Initial state
-  -> (State s, Either (ParseError (Token s) e) a)
-runParser' p = runIdentity . runParserT' p
-
--- | @runParserT p file input@ runs parser @p@ on the input list of tokens
--- @input@, obtained from source @file@. The @file@ is only used in error
--- messages and may be the empty string. Returns a computation in the
--- underlying monad @m@ that returns either a 'ParseError' ('Left') or a
--- value of type @a@ ('Right').
-
-runParserT :: Monad m
-  => ParsecT e s m a -- ^ Parser to run
-  -> String        -- ^ Name of source file
-  -> s             -- ^ Input for parser
-  -> m (Either (ParseError (Token s) e) a)
-runParserT p name s = snd `liftM` runParserT' p (initialState name s)
-
--- | This function is similar to 'runParserT', but like 'runParser'' it
--- accepts and returns parser state. This is thus the most general way to
--- run a parser.
---
--- @since 4.2.0
-
-runParserT' :: Monad m
-  => ParsecT e s m a -- ^ Parser to run
-  -> State s       -- ^ Initial state
-  -> m (State s, Either (ParseError (Token s) e) a)
-runParserT' p s = do
-  (Reply s' _ result) <- runParsecT p s
-  case result of
-    OK    x -> return (s', Right x)
-    Error e -> return (s', Left  e)
-
--- | Given name of source file and input construct initial state for parser.
-
-initialState :: String -> s -> State s
-initialState name s = State s (initialPos name :| []) defaultTabWidth
 
 -- | Low-level unpacking of the 'ParsecT' type. 'runParserT' and 'runParser'
 -- are built upon this.
